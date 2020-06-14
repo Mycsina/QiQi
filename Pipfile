@@ -23,17 +23,15 @@ pyflakes = "*"
 restructuredtext-lint = "*"
 entrypoints = "*"
 docutils = "*"
+matplotlib = "*"
 
 [packages]
 requests = "*"
 bs4 = "*"
 lxml = "*"
 ebooklib = "*"
-joblib = "*"
-requests-async = "*"
-httpx = "*"
-trio = "*"
 cffi = "*"
+matplotlib = "*"
 
 [requires]
 python_version = "3.8"
