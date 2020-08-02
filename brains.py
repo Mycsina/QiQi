@@ -147,8 +147,12 @@ def book_update(novel, ebook, counter, chapter_cut=50, max_workers=12, benchmark
 def wuxiaworld_adapter(html, novel, q):
     page = r.get(f"{novel.url}/{html}")
     soup = BeautifulSoup(page.content, features="lxml")
-    for tag in soup.select(".header,.clear,.nav,.dahengfu,.con_top,.bottem1,.bottem2,#footer"):
+    # Getting rid of page elements
+    for tag in soup.select(".header,.clear,.nav,.dahengfu,.con_top,.bottem1,.bottem2,#footer,body > script:nth-child(1),.box_con > div:nth-child(3) > script:nth-child(1),#content > script:nth-child(149),.box_con > script:nth-child(6),body > script:nth-child(9),body > script:nth-child(2),body > script:nth-child(3),script"):
         tag.decompose()
+    bookname = re.search(soup.select(".bookname > h1:nth-child(1)"), r"<h1>(.*)</h1>")
+    clean_bookname = re.sub(r"\d( ).", " - ", bookname)
+    print(clean_bookname)
     i = q.get()
     chapter = epub.EpubHtml(uid=f"chapter_{i}", title=novel.chapter[i], file_name=f"{i}.xhtml", lang="en")
     # chapter.content = Formatter(soup.prettify()).novel_guesser(novel)
