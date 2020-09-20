@@ -1,6 +1,5 @@
 import base64
 import concurrent.futures
-import copy
 import json
 import logging
 import os
@@ -35,7 +34,7 @@ progress = {}
 lock = RLock()
 
 
-class Wuxiaworld_Novel():
+class Wuxiaworld_Novel:
     """
     This is a class for novels hosted on wuxiaworld.co
 
@@ -61,16 +60,42 @@ class Wuxiaworld_Novel():
         url (str): URL of the novel
         """
         self.page = r.get(url)
-        self.link: list = re.findall(r"href=\"(.*)\" ", BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("dl")).prettify())
-        img_url: str = re.search(r"src=\"(.*)\" width", BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("img")).prettify())[1]
-        self.chapter: list = re.findall(r"   (.*)", BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("dl")).prettify())
+        self.link: list = [
+            re.search(r"/.*/(.*.html)", i)[1]
+            for i in [
+                entry["href"]
+                for entry in [
+                    entry
+                    for entry in BeautifulSoup(self.page.content, features="lxml").select(".chapter-list")[0]
+                    if entry.find("a") is None
+                ]
+            ]
+        ]
+        img_url: str = [
+            entry
+            for entry in BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("img")).contents[
+                1:-1
+            ]
+            if entry["class"] == ["bg-img"]
+        ][0]["src"]
+        self.chapter: list = [
+            entry.contents[0]
+            for entry in BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("p")).contents[1:]
+            if entry["class"] == ["chapter-name"]
+        ]
+        self.chapter.insert(0, "padding")
         self.url = url
-        self.author: str = re.search(r"Author：(.*)", BeautifulSoup(
-            self.page.content, features="lxml", parse_only=SoupStrainer("p")).prettify())[1]
+        self.author: str = BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("span")).select(
+            ".name"
+        )[0].contents[0]
         self.chap_dict = dict(zip(self.chapter, self.link))
-        self.book_name = re.sub(r"-", " ", re.search(r".co/(.*)/", url)[1])
+        self.book_name = (
+            BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("div"))
+            .select(".book-name")[0]
+            .contents[0]
+        )
         self.book_filename = re.sub(r" ", r"_", self.book_name.lower())
-        self.img_response = r.get(f"https://www.wuxiaworld.co/{img_url}", stream=True)
+        self.img_response = r.get(f"{img_url}", stream=True)
 
 
 def book_maker(novel, lock):
@@ -82,7 +107,7 @@ def book_maker(novel, lock):
     ebook.add_author(novel.author)
     with lock:
         novel.img_response.raw.decode_content = True
-        with open(f"temp.jpg", 'wb') as f:
+        with open(f"temp.jpg", "wb") as f:
             shutil.copyfileobj(novel.img_response.raw, f)
         with open("temp.jpg", "rb") as f:
             ebook.set_cover("image.jpg", f.read())
@@ -93,20 +118,19 @@ def book_maker(novel, lock):
     return [novel, ebook, counter]
 
 
-def book_update(novel, ebook, counter, chapter_cut=50, max_workers=12, benchmark=False, thread_benchmark=False):
+def book_update(novel, ebook, counter, chapter_cut=50, max_workers=10, benchmark=False, thread_benchmark=False):
     global progress
     if benchmark:
         start = perf_counter()
         novel.chap_dict = {k: novel.chap_dict[k] for k in list(novel.chap_dict.keys())[:chapter_cut]}
     if thread_benchmark:
         novel.chap_dict = {k: novel.chap_dict[k] for k in list(novel.chap_dict.keys())[:chapter_cut]}
-    throwaway_dict = copy.deepcopy(novel.chap_dict)
     if progress == []:
         pass
     else:
         for book_name, chapter in progress.items():
             if book_name == novel.book_name:
-                for entry, _html in throwaway_dict.items():
+                for entry, _html in {k: v for (k, v) in novel.chap_dict.items()}.items():
                     if entry != chapter:
                         novel.chap_dict.pop(entry)
                     else:
@@ -148,20 +172,22 @@ def wuxiaworld_adapter(html, novel, q):
     page = r.get(f"{novel.url}/{html}")
     soup = BeautifulSoup(page.content, features="lxml")
     # Getting rid of page elements
-    for tag in soup.select(".header,.clear,.nav,.dahengfu,.con_top,.bottem1,.bottem2,#footer,body > script:nth-child(1),.box_con > div:nth-child(3) > script:nth-child(1),#content > script:nth-child(149),.box_con > script:nth-child(6),body > script:nth-child(9),body > script:nth-child(2),body > script:nth-child(3),script"):
+    for tag in soup.find_all(["script", "link", "ins", "amp-auto-ads, iframe"]):
         tag.decompose()
-    bookname = re.search(soup.select(".bookname > h1:nth-child(1)"), r"<h1>(.*)</h1>")
-    clean_bookname = re.sub(r"\d( ).", " - ", bookname)
-    print(clean_bookname)
+    for tag in soup.select(
+        ".t-header,.book-wrapper,.chapter-entity > a:nth-child(91),.section-end,.reader-page,.empty-container,.guide-wrapper,.bar-header,.readtool-footer,.font-tool,.disqus_box,.t-footer,body > div:nth-child(16),.login_dim,.app-download"
+    ):
+        tag.decompose()
+    bookname = soup.find("h1").contents[0]
     i = q.get()
-    chapter = epub.EpubHtml(uid=f"chapter_{i}", title=novel.chapter[i], file_name=f"{i}.xhtml", lang="en")
+    chapter = epub.EpubHtml(uid=f"chapter_{i}", title=bookname, file_name=f"{i}.xhtml", lang="en")
     # chapter.content = Formatter(soup.prettify()).novel_guesser(novel)
-    chapter.content = soup.prettify()
+    chapter.content = re.sub(r"Please ((.|\n)*) free", "", soup.prettify())
     logging.debug(f"| QiQi | Working on: {novel.chapter[i]}")
     return chapter
 
 
-def book_logic(entry, lock1, chaps=50, max_workers=12, bench=False):
+def book_logic(entry, lock1, chaps=50, max_workers=10, bench=False):
     global progress
     logging.info(f"| QiQi | Working on: {entry}")
     novel = Wuxiaworld_Novel(entry)
@@ -284,6 +310,12 @@ class Formatter:
         return re.sub(r"(\] \[)", r"]\n<br/>\n[", page)
 
 
-# tasker("list.json")
+tasker("list.json")
 # single_benchmark()
-multiple_benchmark()
+# multiple_benchmark()
+# print(link)
+
+# TODO
+# implement tasker switching adapter on reading the url to boxnovel.com since that seems to work
+# implement check for incomplete chapters and make it go for novelupdates.cc to get those since that's how it seems to work
+# make possible to have this running as a discord bot
