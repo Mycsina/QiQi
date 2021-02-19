@@ -20,7 +20,7 @@ from matplotlib import pyplot as plt
 import requests as r
 
 
-time_format = f"%d-%m-%Y %H:%M:%S"
+time_format = "%d-%m-%Y %H:%M:%S"
 # Enable if you want to try to automatize this and wish to save logs
 logging.basicConfig(
     # filename=f"/logs/main-{datetime.now().strftime(time_format)}",
@@ -51,7 +51,7 @@ class Wuxiaworld_Novel:
     img_response (Response): Cover of the novel\n
     """
 
-    def __init__(self, url):
+    def __init__(self, url: str):
         """
         The constructor for WuxiaWorld_Novel class
 
@@ -85,9 +85,11 @@ class Wuxiaworld_Novel:
         ]
         self.chapter.insert(0, "padding")
         self.url = url
-        self.author: str = BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("span")).select(
-            ".name"
-        )[0].contents[0]
+        self.author: str = (
+            BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("span"))
+            .select(".name")[0]
+            .contents[0]
+        )
         self.chap_dict = dict(zip(self.chapter, self.link))
         self.book_name = (
             BeautifulSoup(self.page.content, features="lxml", parse_only=SoupStrainer("div"))
@@ -98,7 +100,8 @@ class Wuxiaworld_Novel:
         self.img_response = r.get(f"{img_url}", stream=True)
 
 
-def book_maker(novel, lock):
+def book_maker(novel: Wuxiaworld_Novel, lock: RLock) -> list:
+    """Basic ebook setup (spine, nav, cover, image)"""
     counter = 0
     ebook = epub.EpubBook()
     ebook.set_identifier(base64.b64encode(novel.book_name.encode()).decode())
@@ -107,7 +110,7 @@ def book_maker(novel, lock):
     ebook.add_author(novel.author)
     with lock:
         novel.img_response.raw.decode_content = True
-        with open(f"temp.jpg", "wb") as f:
+        with open("temp.jpg", "wb") as f:
             shutil.copyfileobj(novel.img_response.raw, f)
         with open("temp.jpg", "rb") as f:
             ebook.set_cover("image.jpg", f.read())
@@ -118,7 +121,16 @@ def book_maker(novel, lock):
     return [novel, ebook, counter]
 
 
-def book_update(novel, ebook, counter, chapter_cut=50, max_workers=10, benchmark=False, thread_benchmark=False):
+def book_update(
+    novel: Wuxiaworld_Novel,
+    ebook: epub.EpubBook,
+    counter: int,
+    chapter_cut: int = 50,
+    max_workers: int = 1,
+    benchmark: bool = False,
+    thread_benchmark: bool = False,
+):
+    """Function that updates the novel based on the progress.json file"""
     global progress
     if benchmark:
         start = perf_counter()
@@ -157,7 +169,7 @@ def book_update(novel, ebook, counter, chapter_cut=50, max_workers=10, benchmark
             with open("timing", "a+") as f:
                 f.write(f"{max_workers} threads: {round(stop-start, 3)} for {len(novel.chap_dict)}\n")
         logging.debug(f"| QiQi | Saving the progress:\n{progress}")
-        with open(f"progress.json", "w+") as f:
+        with open("progress.json", "w+") as f:
             json.dump(progress, f)
     except IndexError:
         try:
@@ -168,7 +180,7 @@ def book_update(novel, ebook, counter, chapter_cut=50, max_workers=10, benchmark
         return [len(novel.chap_dict), round((stop - start), 3)]
 
 
-def wuxiaworld_adapter(html, novel, q):
+def wuxiaworld_adapter(html: str, novel: Wuxiaworld_Novel, q: Queue):
     page = r.get(f"{novel.url}/{html}")
     soup = BeautifulSoup(page.content, features="lxml")
     # Getting rid of page elements
@@ -187,7 +199,7 @@ def wuxiaworld_adapter(html, novel, q):
     return chapter
 
 
-def book_logic(entry, lock1, chaps=50, max_workers=10, bench=False):
+def book_logic(entry: str, lock1: RLock, chaps: int = 50, max_workers: int = 1, bench: bool = False):
     global progress
     logging.info(f"| QiQi | Working on: {entry}")
     novel = Wuxiaworld_Novel(entry)
@@ -266,7 +278,14 @@ def multiple_benchmark():
             with open("list.json", "r") as f:
                 novel_list = json.load(f)
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                executor.map(book_logic, novel_list, repeat(RLock()), repeat(entry), repeat(max_workers), repeat(True))
+                executor.map(
+                    book_logic,
+                    novel_list,
+                    repeat(RLock()),
+                    repeat(entry),
+                    repeat(max_workers),
+                    repeat(True),
+                )
             stop = perf_counter()
             y.append(round((stop - start), 3) / (entry * len(novel_list)))
             x.append(max_workers)
